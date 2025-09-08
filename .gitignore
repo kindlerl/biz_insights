@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.* 
+*.ipynb_checkpoints
+
+# Streamlit
+.streamlit/secrets.toml
+
+# macOS / editors
+.DS_Store
+.vscode/
+.idea/
+
+# Local data dumps (never commit real data)
+data/
+
+# Skip project documentation
+Project_Documentation/*
+
+# Ignore any MS Word lock files
+~$*

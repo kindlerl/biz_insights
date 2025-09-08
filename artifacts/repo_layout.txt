@@ -1,0 +1,71 @@
+business-insights/
+├─ README.md
+├─ LICENSE
+├─ .gitignore
+├─ requirements.txt                  # streamlit, boto3, pyathena, etc.
+├─ env/                              # never commit secrets; templates only
+│  ├─ .env.example                   # STREAMLIT/DB config (no secrets)
+│  └─ streamlit.secrets.example.toml
+├─ config/
+│  ├─ project.yaml                   # bucket, region, db names, workgroup
+│  └─ schedules.yaml                 # daily run time, cron notes
+├─ docs/
+│  ├─ architecture.md                # Bronze→Silver→Gold, diagrams
+│  ├─ runbook_daily.md               # daily workflow, success criteria
+│  ├─ kpis.md                        # 7 KPI specs (definition, grain, windows)
+│  └─ CHANGELOG.md
+├─ diagrams/
+│  ├─ pipeline.drawio                # your Google-maps diagram
+│  └─ workflow.png
+├─ sql/                              # Athena SQL, organized by layer
+│  ├─ bronze/
+│  │  ├─ create_db.sql               # CREATE DATABASE biz_insights
+│  │  ├─ bronze_tables.sql           # (if not using crawler)
+│  │  └─ validation_checks.sql       # counts, orphan checks
+│  ├─ silver/
+│  │  ├─ silver_tables.sql           # DDL for silver external tables
+│  │  └─ validation_checks.sql
+│  ├─ gold/
+│  │  ├─ g1_daily_sales_by_store_ctas.sql
+│  │  ├─ g1_daily_sales_by_store_insert_overwrite.sql
+│  │  ├─ g2_item_sales_by_day_ctas.sql
+│  │  ├─ g3_customer_facts_schema.sql        # if materialized in SQL
+│  │  ├─ g4_discounts_by_day_ctas.sql
+│  │  └─ views.sql                   # v_sales_trends, v_top_items_30d, etc.
+│  └─ utils/
+│     └─ helpers.sql                 # common CTEs/patterns you copy/paste
+├─ glue/                             # Glue jobs, workflow JSON, IAM docs
+│  ├─ jobs/
+│  │  ├─ silver_build.py             # your current Silver job
+│  │  ├─ gold_g1.py                  # (if you choose Spark for G1)
+│  │  ├─ gold_g2.py
+│  │  └─ gold_g3_customer_facts.py   # RFM/CLV features if Spark
+│  ├─ workflow/
+│  │  └─ workflow_spec.md            # nodes, params (--PROCESS_DATE), retries
+│  └─ iam/
+│     ├─ s3_policy_bronze_silver_gold.json
+│     ├─ athena_minimal_user_policy.json
+│     └─ notes.md                    # which role has which policy
+├─ streamlit_dashboard/
+│  ├─ app.py
+│  ├─ pages/                         # optional Streamlit multipage
+│  │  ├─ 01_📈_Sales_Trends.py
+│  │  ├─ 02_🏪_Top_Locations.py
+│  │  ├─ 03_🍔_Top_Items_30d.py
+│  │  ├─ 04_🎟️_Loyalty_Impact.py
+│  │  └─ 05_👤_Customer_Facts.py
+│  ├─ assets/                        # logos, screenshots
+│  └─ theme/                         # custom CSS, theming helpers
+├─ tests/
+│  ├─ sql/                           # lightweight SQL assertions (row counts)
+│  └─ python/                        # unit tests for any helpers
+├─ notebooks/                        # optional scratch/EDA (if you use them)
+│  └─ exploration.ipynb
+├─ artifacts/                        # exported PDFs/PNGs, KPI sheets, etc.
+│  ├─ kpi_requirements.pdf
+│  └─ sample_charts/
+└─ .github/
+   └─ workflows/
+      ├─ ci.yml                      # ruff/black + basic pytest/sqlfluff
+      └─ security.yml                # (optional) Trivy/Semgrep, etc.
+
