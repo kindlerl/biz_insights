@@ -1,0 +1,48 @@
+In Athena, MSCK REPAIR TABLE = “scan S3 for Hive-style partitions and register them in the Glue Data Catalog.”
+
+Because your Spark job wrote files directly to S3 (not via Athena), the catalog didn’t know about those order_date=.../ folders yet. MSCK REPAIR:
+
+Lists the S3 prefix recursively,
+
+Detects folders like order_date=2025-09-07/,
+
+Issues “add partition” calls to Glue.
+
+That S3 listing + catalog updates is why it took ~40s. It’s normal.
+
+What to do going forward (faster than a full repair)
+
+You don’t need to run a full MSCK REPAIR every day. Use one of these:
+
+A) Add just the new day (fast)
+
+After your daily write, add the single partition explicitly:
+
+ALTER TABLE biz_insights.gold_daily_sales_by_store
+ADD IF NOT EXISTS
+PARTITION (order_date='${PROCESS_DATE}')
+LOCATION 's3://bus-insights-dev-us-east-1/gold/daily_sales_by_store/order_date=${PROCESS_DATE}/';
+
+
+Replace ${PROCESS_DATE} with the date you wrote (e.g., 2025-09-07).
+This runs in seconds.
+
+B) Partition projection (no adds/repairs ever)
+
+Tell Athena how your partitions are laid out so it doesn’t need catalog entries per day:
+
+ALTER TABLE biz_insights.gold_daily_sales_by_store
+SET TBLPROPERTIES (
+  'projection.enabled'='true',
+  'projection.order_date.type'='date',
+  'projection.order_date.range'='2025-01-01,NOW',
+  'projection.order_date.format'='yyyy-MM-dd',
+  'storage.location.template'='s3://bus-insights-dev-us-east-1/gold/daily_sales_by_store/order_date=${order_date}/'
+);
+
+
+After that, you can query any date range without MSCK or ADD PARTITION.
+
+C) (For context) Athena writes auto-register
+
+If you had created the partitions with Athena (CTAS/INSERT), Athena would auto-register them. But since Glue/Spark wrote the files, you need A or B.
