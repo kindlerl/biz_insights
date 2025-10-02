@@ -14,7 +14,7 @@ Daily pipeline that ingests app orders (Bronze), standardizes/dedupes (Silver), 
 ---
 
 ## Architecture
-```mermaid
+```
 flowchart LR
   A[RDS SQL Server] -->|JDBC| B[Glue Job: Bronze]
   B -->|Parquet by ingestion_date| S3B[(S3 bronze/)]
