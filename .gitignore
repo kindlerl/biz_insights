@@ -12,6 +12,9 @@ venv/
 
 # macOS / editors
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
 .vscode/
 .idea/
 
@@ -23,3 +26,19 @@ Project_Documentation/*
 
 # Ignore any MS Word lock files
 ~$*
+
+# Logs / temp
+*.log
+tmp/
+cache/
+
+# Local artifacts
+docs/workflow_graph.json
+
+# Never commit secrets
+secrets/
+*.key
+*.pem
+*accessKeys*.csv
+.env*
+*.tfstate

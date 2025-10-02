@@ -1,0 +1,6 @@
+streamlit
+PyAthena
+boto3
+pandas
+python-dateutil
+

@@ -1,0 +1,41 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ListBucket",
+            "Effect": "Allow",
+            "Action": [
+                "s3:ListBucket"
+            ],
+            "Resource": "arn:aws:s3:::bus-insights-dev-us-east-1",
+            "Condition": {
+                "StringLike": {
+                    "s3:prefix": [
+                        "bronze/*",
+                        "silver/*",
+                        "gold/*",
+                        "athena/results/*",
+                        "tmp/*"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "RWObjects",
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:PutObject",
+                "s3:DeleteObject",
+                "s3:AbortMultipartUpload"
+            ],
+            "Resource": [
+                "arn:aws:s3:::bus-insights-dev-us-east-1/bronze/*",
+                "arn:aws:s3:::bus-insights-dev-us-east-1/silver/*",
+                "arn:aws:s3:::bus-insights-dev-us-east-1/gold/*",
+                "arn:aws:s3:::bus-insights-dev-us-east-1/athena/results/*",
+                "arn:aws:s3:::bus-insights-dev-us-east-1/tmp/*"
+            ]
+        }
+    ]
+}

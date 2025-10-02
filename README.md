@@ -1,138 +1,210 @@
 # Business Insights – Analytics Pipeline (Bronze → Silver → Gold)
 
-End-to-end, low-cost analytics stack on AWS using **S3 + Glue + Athena + Streamlit**.  
-Daily job ingests/cleans data and materializes a small set of reusable Gold facts that power 7 KPIs.
+Daily pipeline that ingests app orders (Bronze), standardizes/dedupes (Silver), aggregates (Gold), and exposes Athena views for dashboards.
 
 ---
 
-## Quick Facts
+## At a glance
 
 - **Region:** `us-east-1`  
 - **Bucket:** `bus-insights-dev-us-east-1`  
-- **Athena Workgroup:** `primary` (or project WG)  
-- **Database (Glue/Athena):** `biz_insights`  
-- **Daily Schedule:** once/day via EventBridge → Glue Workflow (3–4 nodes)
+- **Athena Database:** `biz_insights` (workgroup `primary`)
+- **Schedule:** 01:00 UTC via Glue Workflow (Scheduled → Bronze → Bronze Crawler → Silver → Gold fan-out → Gold Crawler)
 
 ---
 
-## Architecture (Google-Maps view)
-
-**Sources** → SQL Server (staging & basic typing)  
-**Bronze (S3/parquet)** → landed from SQL Server (via Glue job), validated in Athena  
-**Silver (S3/parquet)** → type-cast, light transforms (Spark)  
-**Gold (S3/parquet)** → few reusable facts (Athena CTAS or Spark), partitioned by `order_date`  
-**Serving** → Athena SQL views + Streamlit
-
+## Architecture
+```mermaid
+flowchart LR
+  A[RDS SQL Server] -->|JDBC| B[Glue Job: Bronze]
+  B -->|Parquet by ingestion_date| S3B[(S3 bronze/)]
+  B --> C[Glue Crawler: Bronze] --> GC1[Glue Catalog (bronze tables)]
+  S3B --> D[Glue Job: Silver] --> S3S[(S3 silver/)]
+  S3S --> E1[Glue Job: G1]
+  S3S --> E2[Glue Job: G2]
+  S3S --> E3[Glue Job: G3]
+  S3S --> E4[Glue Job: G4]
+  E1 & E2 & E3 & E4 --> S3G[(S3 gold/)]
+  S3G --> C2[Glue Crawler: Gold Partitions] --> GC2[Glue Catalog (gold tables+partitions)]
+  GC2 --> ATH[Athena Views/Dashboards]
+```
 ---
 
-## Environments & Prereqs
+## Components
 
-- AWS account with access to **S3, Glue, Athena, EventBridge, IAM**
-- Local Python (for Streamlit app); see `requirements.txt`
-- S3 prefixes created:
-  - `bronze/`, `silver/`, `gold/`, `athena/results/`, `tmp/` (optional)
+- **Bronze:** Incremental parquet partitioned by `ingestion_date`; no-op success on empty days.
+- **Silver:** Typed tables; `order_total`, `order_date`; synthesized `date_dim`; dedupe/guard rails; dynamic partition overwrite.
+- **Gold:** 
+  - `gold_daily_sales_by_store` (partition: `order_date`)
+  - `gold_item_sales_by_day` (partition: `order_date`)
+  - `gold_customer_facts` (partition: `snapshot_date`)
+  - `gold_discounts_by_day` (partition: `order_date`)
 
 ---
-## Set Up (once)
+## Quick start
 
-1. **Glue Data Catalog DB**
-   ```sql
-   CREATE DATABASE IF NOT EXISTS biz_insights;
-Athena Workgroup Results Location
-Set to s3://bus-insights-dev-us-east-1/athena/results/.
+### One-time:
 
-IAM (least-priv summary)
+- Create the Glue/Athena database (`biz_insights`) and external tables (DDLs under `athena/ddl/`).
+- Ensure Glue jobs/crawlers exist and the workflow is wired (see `docs/runbook_daily.md`).
 
-Glue Job Role: read bronze/*, write silver/* and gold/*
+### Run manually:
 
-Your user/role: Athena query permissions + write to athena/results/*
+```
+# Start the workflow once
+RUN_ID=$(aws glue start-workflow-run --name biz-insights-daily --query RunId --output text --region us-east-1)
+aws glue get-workflow-run --name biz-insights-daily --run-id "$RUN_ID" \
+  --query 'Run.{Status:Status,StartedOn:StartedOn,CompletedOn:CompletedOn}' --region us-east-1
+```
 
-Bronze Tables
-Prefer Glue Crawler pointing at s3://bus-insights-dev-us-east-1/bronze/ → biz_insights with prefix bronze_.
+### Check latest job states:
 
-Bronze → Validation (Athena)
-Run from sql/bronze/validation_checks.sql (row counts, distinct keys, orphan options, parseability).
-Goal: verify counts match the SQL Server seed and no orphans.
+```
+for J in bus_insights_ingest_to_bronze biz_insights_silver_build \
+         gold_g1_daily_sales_by_store gold_g2_item_sales_by_day \
+         gold_g3_customer_facts gold_g4_discounts_by_day; do
+  aws glue get-job-runs --job-name "$J" --max-results 1 \
+    --query 'JobRuns[0].{Job:JobName,State:JobRunState,Started:StartedOn,Duration:ExecutionTime,Error:ErrorMessage}' \
+    --region us-east-1 || echo "Missing: $J"
+done
+```
 
-Silver
-Implemented via glue/jobs/silver_build.py (Spark, Glue 4.0)
+### Sanity Check (Athena)
 
-Outputs:
+```sql
+-- Silver
+SELECT MAX(order_date) AS max_dt, COUNT(*) AS rows FROM biz_insights.silver_order_items;
+SELECT MIN(date_key), MAX(date_key), COUNT(*) FROM biz_insights.silver_date_dim;
 
-silver/order_items/ (casts, order_total, order_date)
+-- Gold
+SELECT MAX(order_date), COUNT(*) FROM biz_insights.gold_daily_sales_by_store;
+SELECT MAX(order_date), COUNT(*) FROM biz_insights.gold_item_sales_by_day;
+SELECT MAX(snapshot_date), COUNT(*) FROM biz_insights.gold_customer_facts;
+SELECT MAX(order_date), COUNT(*) FROM biz_insights.gold_discounts_by_day;
 
-silver/order_items_options/ (casts)
+-- View example
+SELECT MAX(order_date) FROM biz_insights.v_discount_orders_90d;
+```
 
-silver/date_dim/ (casts)
+### Reliability guardrails
 
-Register external tables with sql/silver/silver_tables.sql
+- Lightweight asserts in jobs (column presence, non-empty outputs, date recency).
+- `spark.sql.sources.partitionOverwriteMode=dynamic` + `.repartition(partition_col)` for atomic day writes.
+- No-data days: Bronze/Silver exit **successfully** without writes.
 
-Validate with sql/silver/validation_checks.sql (counts match Bronze; null checks).
+### Teardown/cost controls
 
-Gold (reusable facts powering all KPIs)
-G1. gold_daily_sales_by_store (partitioned by order_date)
-Grain: restaurant × day. Includes items + options, orders count, loyalty split.
+```bash
+# Disable nightly trigger
+aws glue stop-trigger --name t_start_bronze --region us-east-1
 
-Create once (CTAS): sql/gold/g1_daily_sales_by_store_ctas.sql
+# Stop RDS
+aws rds stop-db-instance --db-instance-identifier bus-insights-sqlserver --region us-east-1
 
-Daily refresh (insert/overwrite partition): sql/gold/g1_daily_sales_by_store_insert_overwrite.sql
+# Remove interface VPC endpoints (keep S3 Gateway)
+aws ec2 describe-vpc-endpoints --region us-east-1 --query 'VpcEndpoints[].VpcEndpointId'
+# aws ec2 delete-vpc-endpoints --vpc-endpoint-ids vpce-XXXX --region us-east-1
+```
 
-G2. gold_item_sales_by_day (partitioned by order_date)
-Grain: restaurant × day × item. Drives Top Items (e.g., 30-day).
+### Repo map (short)
 
-CTAS in sql/gold/g2_item_sales_by_day_ctas.sql
+- `glue/jobs/` — Glue job sources (Bronze, Silver, G1–G4)
+- `athena/ddl/` & `athena/views/` — External tables + view SQL
+- `docs/` — Architecture, runbook, screenshots
+- `glue/workflow/` & `glue/triggers/` — CLI helpers/scripts
 
-G3. gold_customer_facts (optional Spark job)
-Grain: user_id snapshot. CLV/RFM/churn features. (Add when needed for customer KPIs.)
+## Recommended visualizations to review
 
-G4. gold_discounts_by_day (optional)
-Grain: restaurant × day. Discounted vs non-discounted metrics (option_price < 0).
+1) **Daily sales trend (overall & by store)**<br>
+*Question:* Are sales trending up or down? Any recent anomalies?<br>
+*Chart:* Line (date on x, sales on y), optional small-multiples by store.<br>
+*Data:* gold_daily_sales_by_store (or view sales_trends_and_seasonality_monthly_by_store.sql).<br>
+*Quick SQL:*
 
-CTAS in sql/gold/g4_discounts_by_day_ctas.sql
+```sql
+SELECT order_date, SUM(daily_sales) AS sales
+FROM biz_insights.gold_daily_sales_by_store
+GROUP BY 1 ORDER BY 1;
+```
 
-Views (presentation layer): sql/gold/views.sql
+2) **Store leaderboard (latest day)**<br>
+*Question:* Which locations lead by revenue/AOV on the latest day?<br>
+*Chart:* Bar (store on y, revenue on x), table for AOV & order count.<br>
+*Data:* v_store_sales_latest (or location_performance.sql).<br>
+*Quick SQL:*<br>
 
-v_daily_sales_by_store (adds pct columns)
+```sql
+WITH d AS (SELECT MAX(order_date) AS m FROM biz_insights.gold_daily_sales_by_store)
+SELECT store_id, daily_sales, orders_count, aov
+FROM biz_insights.gold_daily_sales_by_store t JOIN d ON t.order_date=d.m
+ORDER BY daily_sales DESC LIMIT 15;
+```
 
-v_top_items_30d (rolling window)
+3) **Top items (last 30 days)**<br>
+*Question:* What’s selling now? Any new risers?<br>
+*Chart:* Horizontal bar (item on y, 30-day sales on x).<br>
+*Data:* v_item_sales_30d (or g2_item_sales_by_day.sql).<br>
+*Quick SQL:*<br>
 
-v_location_ranking (rank stores by revenue/AOV)
+```sql
+SELECT item_name, SUM(item_sales) AS sales_30d
+FROM biz_insights.gold_item_sales_by_day
+WHERE order_date >= date_add('day', -30, current_date)
+GROUP BY 1 ORDER BY sales_30d DESC LIMIT 20;
+```
 
-Daily Scheduling
-Glue Workflow (suggested node order):
+4) **Discount effectiveness (rolling 90 days)**<br>
+*Question:* Do discounts lift revenue or just shift margin?<br>
+*Chart:* Dual line (discounted vs non-discounted sales) or stacked bars.<br>
+*Data:* v_discount_orders_90d (or pricing_and_discounts_effectiveness.sql).<br>
+*Quick SQL:*<br>
 
-Silver job
+```sql
+SELECT order_date,
+       SUM(CASE WHEN is_discounted THEN order_sales ELSE 0 END) AS discounted_sales,
+       SUM(CASE WHEN NOT is_discounted THEN order_sales ELSE 0 END) AS full_price_sales
+FROM biz_insights.gold_discounts_by_day
+GROUP BY 1 ORDER BY 1;
+```
 
-G1 (and G2/G4 in parallel if using Glue; or run CTAS via scheduled Athena if you prefer)
+5) **Loyalty impact**<br>
+*Question:* How do loyalty orders differ (AOV, frequency)?<br>
+*Chart:* Side-by-side bars (loyalty vs non-loyalty), or box/violin for AOV.<br>
+*Data:* loyalty_program_impact.sql.<br>
+*Quick SQL:*<br>
 
-(Optional) G3 customer_facts
+```sql
+SELECT is_loyalty, COUNT(DISTINCT order_id) orders, AVG(aov) avg_order_value
+FROM biz_insights.gold_daily_sales_by_store
+GROUP BY is_loyalty;
+```
 
-EventBridge cron → run once/day.
+6) **Customer segments (RFM / churn risk)**<br>
+*Question:* What’s the mix of VIP/High-Value/At-risk customers?<br>
+*Chart:* Stacked bar or treemap by segment; table with counts & revenue.<br>
+*Data:* gold_customer_facts + customer_segmentation_rfm_loyalty.sql / churn_risk_indicators.sql.<br>
+*Quick SQL:*<br>
 
-3:00 AM America/Chicago:
+```sql
+WITH s AS (SELECT MAX(snapshot_date) d FROM biz_insights.gold_customer_facts)
+SELECT segment_label, COUNT(*) customers,
+       SUM(lifetime_gross_sales) revenue
+FROM biz_insights.gold_customer_facts
+WHERE snapshot_date IN (SELECT d FROM s)
+GROUP BY 1 ORDER BY customers DESC;
+```
 
-CDT (UTC-5): cron(0 8 * * ? *)
+7) **Seasonality & holidays**<br>
+*Question:* Which days/months/holidays punch above their weight?<br>
+*Chart:* Heatmap (weekday × month), or bar by holiday.<br>
+*Data:* sales_trends_and_seasonality_monthly_by_category.sql, sales_trends_and_seasonality_holiday.sql.<br>
+*Quick SQL:*<br>
 
-CST (UTC-6): cron(0 9 * * ? *)
+```sql
+SELECT month(order_date) m, day_of_week, SUM(daily_sales) sales
+FROM biz_insights.gold_daily_sales_by_store
+JOIN biz_insights.silver_date_dim ON date_key=order_date
+GROUP BY 1,2 ORDER BY 1,2;
+```
 
-Idempotency: each Gold job overwrites only the target order_date partition.
-
-Backfill: allow --PROCESS_DATE=YYYY-MM-DD for manual re-runs.
-
-Streamlit
-App code under streamlit_dashboard/.
-
-Typical dependencies: streamlit, pandas, pyathena, plotly (configure in requirements.txt).
-
-Suggested pages:
-
-📈 Sales Trends (from v_daily_sales_by_store)
-
-🏪 Top Locations (rank by revenue/AOV)
-
-🍔 Top Items 30d (from v_top_items_30d)
-
-🎟️ Loyalty Impact (loyalty vs non-loyalty)
-
-👤 Customer Facts (from gold_customer_facts)
-
+Tip: for demos, filter to last 30/90 days and highlight the latest day to show the end-to-end freshness.

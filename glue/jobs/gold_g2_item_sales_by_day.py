@@ -19,6 +19,32 @@ spark = (SparkSession.builder.appName("gold-item-sales-by-day").getOrCreate())
 spark.conf.set("spark.sql.session.timeZone", "UTC")
 spark.conf.set("spark.sql.sources.partitionOverwriteMode", "dynamic")
 
+# ---------- helpers ------------
+def assert_true(cond, msg: str):
+    if not cond:
+        raise RuntimeError(f"ASSERT FAILED: {msg}")
+
+def assert_has_columns(df, cols):
+    missing = [c for c in cols if c not in df.columns]
+    assert_true(len(missing) == 0, f"Missing columns: {missing}")
+
+def assert_nonempty(df, msg="DataFrame is empty"):
+    # Spark 3-safe emptiness check
+    cnt = df.limit(1).count()
+    assert_true(cnt > 0, msg)
+
+def assert_partition_present(df, part_col: str, part_value_str: str):
+    # Ensure the partition you intend to process actually exists
+    has = (df.select(F.col(part_col).cast("string").alias("p"))
+             .where(F.col("p") == part_value_str)
+             .limit(1).count() > 0)
+    assert_true(has, f"Partition {part_col}={part_value_str} not found in source")
+
+def assert_no_nulls(df, cols):
+    for c in cols:
+        n = df.where(F.col(c).isNull()).limit(1).count()
+        assert_true(n == 0, f"Column {c} contains NULLs unexpectedly")
+
 read = lambda p: spark.read.parquet(f"s3://{BUCKET}/{p}")
 
 # ---------- load silver ----------
@@ -59,10 +85,21 @@ daily_item = (orders_with_options_total
 
 # write (partitioned by order_date)
 (daily_item
-    .write.mode("overwrite")
-    .option("compression","snappy")
-    .partitionBy("order_date")
-    .parquet(f"s3://{BUCKET}/gold/item_sales_by_day/"))
+  .repartition("order_date")
+  .write.mode("overwrite")
+  .partitionBy("order_date")
+  .option("compression","snappy")
+  .parquet(f"s3://{BUCKET}/gold/item_sales_by_day/"))
+
+# ---------- validation ----------
+gold_path = f"s3://{BUCKET}/gold/item_sales_by_day/"
+g = spark.read.parquet(gold_path)
+
+assert_nonempty(g, "Gold item_sales_by_day is empty after write")
+assert_has_columns(g, ["order_date"])
+# Avoid null IDs blowing up dashboards
+if "item_name" in g.columns:
+    assert_no_nulls(g, ["order_date", "item_name"])
 
 print("G2 complete.", "Mode=FULL" if FULL_REFRESH else f"PROCESS_DATE={PROCESS_DATE}")
 
