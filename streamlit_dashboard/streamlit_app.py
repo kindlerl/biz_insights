@@ -874,26 +874,30 @@ elif section == "Deliverable 4: Loyalty Impact":
     st.subheader("Loyalty vs Non-Loyalty (Latest Snapshot)")
 
     q = """
-        WITH c AS (
+        WITH latest AS (
+          SELECT CAST(MAX(CAST(snapshot_date AS DATE)) AS DATE) AS max_snap
+          FROM biz_insights.gold_customer_facts
+        ),
+        c AS (
           SELECT
-            (loyalty_orders > 0) AS is_loyalty_member,
+            (loyalty_orders > 0)            AS is_loyalty_member,
             lifetime_gross_sales,
             avg_order_value,
             lifetime_orders,
-            -- may be NULL when no recent orders:
-            last_90d_orders,
+            last_90d_orders_count           AS last_90d_orders,  -- alias here
             last_90d_sales
-          FROM biz_insights.gold_customer_facts
-          WHERE snapshot_date = (SELECT max(snapshot_date) FROM biz_insights.gold_customer_facts)
+          FROM biz_insights.gold_customer_facts g
+          CROSS JOIN latest
+          WHERE CAST(g.snapshot_date AS DATE) = latest.max_snap
         )
         SELECT
           is_loyalty_member,
-          COUNT(*) AS customers,
-          CAST(AVG(lifetime_gross_sales) AS DECIMAL(14,2)) AS avg_clv,
-          CAST(AVG(avg_order_value) AS DECIMAL(14,2)) AS avg_aov,
+          COUNT(*)                                           AS customers,
+          CAST(AVG(lifetime_gross_sales) AS DECIMAL(14,2))   AS avg_clv,
+          CAST(AVG(avg_order_value)     AS DECIMAL(14,2))    AS avg_aov,
           CAST(AVG(CASE WHEN lifetime_orders >= 2 THEN 1 ELSE 0 END) AS DOUBLE) AS repeat_rate,
-          CAST(AVG(COALESCE(last_90d_sales,0.0)) AS DECIMAL(14,2))  AS mean_sales_90d,
-          CAST(SUM(COALESCE(last_90d_sales,0.0)) AS DECIMAL(14,2))  AS total_sales_90d
+          CAST(AVG(COALESCE(last_90d_sales, 0.0)) AS DECIMAL(14,2))  AS mean_sales_90d,
+          CAST(SUM(COALESCE(last_90d_sales, 0.0)) AS DECIMAL(14,2))  AS total_sales_90d
         FROM c
         GROUP BY is_loyalty_member
         ORDER BY is_loyalty_member DESC;

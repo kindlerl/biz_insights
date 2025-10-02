@@ -3,30 +3,31 @@
 --    • Select orders between the most recent order date and 90 days prior to that
 --    • Include loyalty sales, percent loyalty sales
 CREATE OR REPLACE VIEW biz_insights.v_sales_trends_daily AS
+WITH latest AS (
+  SELECT CAST(MAX(order_date) AS DATE) AS max_dt
+  FROM biz_insights.gold_daily_sales_by_store
+)
 SELECT
-  restaurant_id,
-  order_date,
-  gross_sales_total,
-  orders_count,
-  items_count,
-  CASE 
-    WHEN orders_count > 0 
-        THEN gross_sales_total / orders_count 
-        ELSE NULL 
+  t.restaurant_id,
+  CAST(t.order_date AS DATE) AS order_date,
+  t.gross_sales_total,
+  t.orders_count,
+  t.items_count,
+  CASE
+    WHEN t.orders_count > 0 THEN t.gross_sales_total / t.orders_count
+    ELSE NULL
   END AS avg_order_value,
-  loyalty_sales,
-  non_loyalty_sales,
-  CASE 
-    WHEN gross_sales_total > 0 
-        THEN loyalty_sales / gross_sales_total 
-        ELSE 0 
+  t.loyalty_sales,
+  t.non_loyalty_sales,
+  CASE
+    WHEN t.gross_sales_total > 0 THEN t.loyalty_sales / t.gross_sales_total
+    ELSE 0
   END AS loyalty_sales_pct
-FROM 
-  biz_insights.gold_daily_sales_by_store
--- date predicate so projection prunes
-WHERE 
-  order_date BETWEEN date_add('day', -90, (SELECT max(order_date) FROM biz_insights.gold_daily_sales_by_store))
-             AND (SELECT max(order_date) FROM biz_insights.gold_daily_sales_by_store);
+FROM biz_insights.gold_daily_sales_by_store t
+CROSS JOIN latest
+WHERE CAST(t.order_date AS DATE)
+      BETWEEN date_add('day', CAST(-90 AS BIGINT), latest.max_dt)
+          AND latest.max_dt;
 
 -- 2) Top items (rolling last 30 days anchored to data max; from G2)
 --    • Find the top N items (by sales), per store, over the last 30 days
