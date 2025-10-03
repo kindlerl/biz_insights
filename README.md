@@ -15,9 +15,7 @@ Daily pipeline that ingests app orders (Bronze), standardizes/dedupes (Silver), 
 
 ## Architecture
 
-[![Global Partners, Business Insights Pipeline Flow - Click for full size](./docs/screenshots/Global_Partners_Business_Insights_Pipeline_Flow_Thumb.png)](./docs/screenshots/Global_Partners_Business_Insights_Pipeline_Flow.png)
-
-Mermaid Diagram
+**Global Partners/Business Insights - Pipeline Flow**
 
 ```mermaid
 flowchart LR
