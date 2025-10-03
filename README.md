@@ -36,6 +36,10 @@ flowchart LR
   C2 --> ATH[[6. Athena Views]]
  ```
 
+**Detailed Architectural Layout**
+
+[![Architectural diagram](./docs/screenshots/Business_Insights_Assessement_E2E_Project_3.drawio.png)](./docs/screenshots/Business_Insights_Assessement_E2E_Project_3.drawio.png)
+
 ## Components
 
 - **Bronze:** Incremental parquet partitioned by `ingestion_date`; no-op success on empty days.
