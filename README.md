@@ -22,20 +22,20 @@ Mermaid Diagram
 ```mermaid
 flowchart LR
   A([RDS SQL Server]) -->|JDBC| B([1. Glue: Bronze])
-  B --> SB[(S3 bronze\nparquet, partition=ingestion_date)]
+  B --> SB[(S3 bronze<br>parquet, partition=ingestion_date)]
   B --> C([2. Bronze Crawler])
   C --> D([3. Glue: Silver])
-  D --> SS[(S3 silver\nparquet)]
+  D --> SS[(S3 silver<br>parquet)]
   SS --> G1([4a. Gold G1])
   SS --> G2([4b. Gold G2])
   SS --> G3([4c. Gold G3])
   SS --> G4([4d. Gold G4])
-  G1 --> SG[(S3 gold\npartitioned writes)]
+  G1 --> SG[(S3 gold<br>partitioned writes)]
   G2 --> SG
   G3 --> SG
   G4 --> SG
   SG --> C2([5. Gold Partitions Crawler])
-  C2 --> ATH[[6. Athena Views]]```
+  C2 --> ATH[[6. Athena Views]]
  ```
 
 ## Components
