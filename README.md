@@ -14,21 +14,29 @@ Daily pipeline that ingests app orders (Bronze), standardizes/dedupes (Silver), 
 ---
 
 ## Architecture
-```
+
+[![Global Partners, Business Insights Pipeline Flow - Click for full size](./docs/screenshots/Global_Partners_Business_Insights_Pipeline_Flow_Thumb.png)](./docs/screenshots/Global_Partners_Business_Insights_Pipeline_Flow.png)
+
+Mermaid Diagram
+
+```mermaid
 flowchart LR
-  A[RDS SQL Server] -->|JDBC| B[Glue Job: Bronze]
-  B -->|Parquet by ingestion_date| S3B[(S3 bronze/)]
-  B --> C[Glue Crawler: Bronze] --> GC1[Glue Catalog (bronze tables)]
-  S3B --> D[Glue Job: Silver] --> S3S[(S3 silver/)]
-  S3S --> E1[Glue Job: G1]
-  S3S --> E2[Glue Job: G2]
-  S3S --> E3[Glue Job: G3]
-  S3S --> E4[Glue Job: G4]
-  E1 & E2 & E3 & E4 --> S3G[(S3 gold/)]
-  S3G --> C2[Glue Crawler: Gold Partitions] --> GC2[Glue Catalog (gold tables+partitions)]
-  GC2 --> ATH[Athena Views/Dashboards]
-```
----
+  A([RDS SQL Server]) -->|JDBC| B([1. Glue: Bronze])
+  B --> SB[(S3 bronze\nparquet, partition=ingestion_date)]
+  B --> C([2. Bronze Crawler])
+  C --> D([3. Glue: Silver])
+  D --> SS[(S3 silver\nparquet)]
+  SS --> G1([4a. Gold G1])
+  SS --> G2([4b. Gold G2])
+  SS --> G3([4c. Gold G3])
+  SS --> G4([4d. Gold G4])
+  G1 --> SG[(S3 gold\npartitioned writes)]
+  G2 --> SG
+  G3 --> SG
+  G4 --> SG
+  SG --> C2([5. Gold Partitions Crawler])
+  C2 --> ATH[[6. Athena Views]]```
+ ```
 
 ## Components
 
